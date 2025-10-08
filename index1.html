@@ -1,0 +1,461 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>冒險 v3-compat（相容版）</title>
+<style>
+  html, body { margin:0; padding:0; background:#0e0f14; color:#e6e6ea;
+    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang TC","Noto Sans TC", Arial; }
+  #app { display:grid; grid-template-columns: 1fr 340px; gap:10px; padding:10px; box-sizing:border-box; }
+  #left { position:relative; }
+  canvas { background:#11131a; border:1px solid #262837; border-radius:8px; image-rendering: pixelated; }
+  #side { display:flex; flex-direction:column; gap:10px; }
+  .card { background:#141622; border:1px solid #262837; border-radius:10px; padding:10px; }
+  .title { font-weight:800; margin-bottom:6px; }
+  #log { height:160px; overflow:auto; background:#0f1120; border:1px solid #2a2d42; border-radius:8px; padding:6px; font-size:13px; line-height:1.35; }
+  #controls { display:grid; grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 56px); gap:6px; justify-content:center; }
+  #controls button, #toolbar button, .tilebtn, .pill, #pasteApply, #pasteCancel {
+    background:#1a1d2e; border:1px solid #2a2d42; color:#e6e6ea; border-radius:8px; padding:6px 10px;
+  }
+  #controls button:active { transform: translateY(1px); }
+  #toolbar { display:flex; gap:6px; flex-wrap:wrap; }
+  .pill { font-size:12px; border-radius:999px; padding:4px 10px; background:#1f2340; border-color:#2d325a; }
+  .palette { display:grid; grid-template-columns: repeat(8, 1fr); gap:6px; }
+  .tilebtn{ height:28px; font-size:12px; }
+  .tilebtn.selected { outline:2px solid #6aa6ff; }
+  .kv { display:flex; gap:10px; flex-wrap:wrap; font-size:13px; opacity:.95 }
+  .kv b{ color:#cde0ff }
+  @media (max-width: 980px){ #app{ grid-template-columns:1fr; } }
+  #pasteModal{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.6); z-index:99;}
+  #pasteCard{ width:min(720px, 92vw); background:#0f1120; border:1px solid #303456; border-radius:10px; padding:12px; }
+  #pasteArea{ width:100%; height:220px; background:#0c0f1a; color:#e6e6ea; border:1px solid #2a2d42; border-radius:6px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  #questList li.done{ text-decoration: line-through; opacity:.65; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <canvas id="game" width="928" height="608"></canvas>
+  </div>
+  <div id="side">
+    <div class="card">
+      <div class="title">🎮 操作（相容版）</div>
+      <div class="kv">
+        <div><b>移動</b>：WASD / 方向鍵</div>
+        <div><b>互動</b>：F</div>
+        <div><b>切換編輯</b>：Tab</div>
+        <div><b>存/讀</b>：P / O</div>
+        <div><b>說明</b>：H</div>
+      </div>
+      <div class="kv"><div><b>說明</b>：拿掉新語法（optional chaining、structuredClone）以支援較舊瀏覽器。</div></div>
+    </div>
+
+    <div class="card">
+      <div class="title">🧭 手機按鈕</div>
+      <div id="controls">
+        <div></div><button id="btn-up">▲</button><div></div>
+        <button id="btn-left">◀</button><button id="btn-interact">F</button><button id="btn-right">▶</button>
+        <div></div><button id="btn-down">▼</button><div></div>
+      </div>
+      <div id="toolbar" style="margin-top:6px;">
+        <button id="btn-edit">切換編輯(Tab)</button>
+        <button id="btn-save">存檔(P)</button>
+        <button id="btn-load">讀檔(O)</button>
+        <button id="btn-reset">清空存檔</button>
+        <button id="btn-export">匯出 JSON</button>
+        <button id="btn-import">匯入 JSON</button>
+        <button id="btn-paste">貼上 JSON</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">📦 狀態</div>
+      <div class="kv">
+        <div>HP：<span id="hp">5</span></div>
+        <div>鑰匙：<span id="keys">0</span></div>
+        <div>關卡：<span id="levelName">L1</span></div>
+        <div>模式：<span id="mode">探索</span></div>
+      </div>
+      <div style="margin-top:6px"><span class="pill" id="perfBadge">快取渲染 ON</span></div>
+    </div>
+
+    <div class="card">
+      <div class="title">🧰 地圖編輯器（Tab 開關）</div>
+      <div style="font-size:13px; opacity:.9">點畫布繪製；0–7 選磚；8 = 生成「巡邏敵人」。7 = 傳送門。</div>
+      <div class="palette" id="palette"></div>
+      <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+        <button id="btn-rand">隨機房間</button>
+        <button id="btn-template">示範地圖</button>
+        <span class="pill" id="cursorInfo">畫筆：地板</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">📜 任務</div>
+      <ul id="questList" style="margin:6px 0 0 18px;"></ul>
+    </div>
+
+    <div class="card">
+      <div class="title">📝 訊息</div>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pasteModal">
+  <div id="pasteCard">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <div class="title">貼上 JSON 匯入關卡/地圖</div>
+      <button id="pasteCancel">關閉</button>
+    </div>
+    <textarea id="pasteArea" placeholder='貼上 {"levels":[...]} 或 {"map":[...]}'></textarea>
+    <div style="display:flex; gap:8px; margin-top:6px; justify-content:flex-end;">
+      <button id="pasteApply">套用</button>
+    </div>
+    <div style="opacity:.8; font-size:12px; margin-top:4px;">支援整套 levels 或單張 map。會進行安全檢查：若不是 JSON（例如以 &lt; 開頭的 HTML），會顯示錯誤。</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // 兼容：structuredClone 後備
+  var _clone = window.structuredClone || function(obj){ return JSON.parse(JSON.stringify(obj)); };
+
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var TILE = 32;
+  var COLS = Math.floor(canvas.width / TILE);
+  var ROWS = Math.floor(canvas.height / TILE);
+
+  var TILES = {
+    0: { name: '地板', color: '#1b1f2d' },
+    1: { name: '牆壁', color: '#2b3047' },
+    2: { name: '鑰匙', color: '#e7c84b' },
+    3: { name: '門(鎖)', color: '#88553a' },
+    4: { name: '寶箱', color: '#9b6d2e' },
+    5: { name: '水域', color: '#254b7a' },
+    6: { name: 'NPC', color: '#6aa6ff' },
+    7: { name: '傳送門', color: '#7b4dff' }
+  };
+  var editorTile = 0;
+
+  var mapChanged = true;
+  var mapLayer = document.createElement('canvas');
+  mapLayer.width = canvas.width; mapLayer.height = canvas.height;
+  var mctx = mapLayer.getContext('2d');
+
+  function log(msg){
+    var el = document.getElementById('log');
+    var t = new Date().toLocaleTimeString();
+    el.innerHTML = '<div>['+t+'] '+msg+'</div>' + el.innerHTML;
+  }
+
+  function blankMap(){
+    var m = [];
+    for(var y=0;y<ROWS;y++){
+      var row = [];
+      for(var x=0;x<COLS;x++){
+        row.push((x===0||y===0||x===COLS-1||y===ROWS-1)?1:0);
+      }
+      m.push(row);
+    }
+    return m;
+  }
+
+  var defaultLevels = [
+    (function(){
+      var m=blankMap(); m[5][5]=2; m[3][COLS-3]=3; m[ROWS-4][4]=4; m[10][10]=6;
+      for(var y=8;y<12;y++){ for(var x=2;x<12;x++){ if(Math.random()<0.12) m[y][x]=5; } }
+      m[ROWS-3][COLS-3]=7;
+      return { name:'L1 地下入口', map:m, portals:[{from:[COLS-3,ROWS-3], toLevel:1, to:[2,2]}],
+               enemies:[{x:16,y:6,path:[[16,6],[22,6],[22,10],[16,10]],speed:2.0,cooldown:0}],
+               quests:[{id:'q_key',text:'找到鑰匙',done:false},
+                       {id:'q_door',text:'打開鎖門',done:false},
+                       {id:'q_portal',text:'到達傳送門',done:false}],
+               npcs:[{x:10,y:10,text:'NPC：拿鑰匙→開門→進傳送門前往 L2！'}]
+             };
+    })(),
+    (function(){
+      var m=blankMap();
+      for(var y=3;y<ROWS-3;y+=2){ for(var x=3;x<COLS-3;x+=2){ m[y][x]=1; } }
+      m[2][2]=2; m[3][COLS-3]=3; m[12][12]=6;
+      m[5][6]=5; m[5][7]=5; m[6][7]=5; m[6][6]=5;
+      m[ROWS-3][COLS-3]=7;
+      return { name:'L2 水域迷廊', map:m, portals:[{from:[COLS-3,ROWS-3], toLevel:2, to:[2,2]}],
+               enemies:[{x:8,y:8,path:[[8,8],[18,8],[18,14],[8,14]],speed:1.5,cooldown:0},
+                        {x:20,y:4,path:[[20,4],[26,4],[26,12],[20,12]],speed:2.2,cooldown:0}],
+               quests:[{id:'q_chest',text:'開啟一個寶箱',done:false},
+                       {id:'q_npc',text:'與 L2 的 NPC 對話',done:false},
+                       {id:'q_portal2',text:'找到前往 L3 的傳送門',done:false}],
+               npcs:[{x:12,y:12,text:'NPC：小心水面滑倒與巡邏者；傳送門在右下角。'}]
+             };
+    })(),
+    (function(){
+      var m=blankMap();
+      for(var x=10;x<COLS-10;x++){ m[6][x]=1; m[ROWS-7][x]=1; }
+      for(var y=6;y<ROWS-6;y++){ m[y][10]=1; m[y][COLS-11]=1; }
+      m[Math.floor(ROWS/2)][Math.floor(COLS/2)] = 4;
+      m[3][COLS-3]=7;
+      return { name:'L3 遺跡核心', map:m, portals:[{from:[COLS-3,3], toLevel:0, to:[2,2]}],
+               enemies:[{x:14,y:8,path:[[14,8],[COLS-14,8],[COLS-14,ROWS-8],[14,ROWS-8]],speed:2.4,cooldown:0}],
+               quests:[{id:'q_final',text:'取得核心寶箱',done:false},
+                       {id:'q_escape',text:'到達出口（可循環回 L1）',done:false}],
+               npcs:[]
+             };
+    })()
+  ];
+
+  var state = {
+    levelIndex: 0,
+    levels: _clone(defaultLevels),
+    player: { x:2, y:2, hp:5, keys:0, invincible:0 },
+    flags: { openedDoor:false, openedChest:false, usedPortal:false, talkedL2:false, finalChest:false },
+    inEditor: false,
+    showingHelp: true,
+    perfCache: true
+  };
+
+  function currentLevel(){ return state.levels[state.levelIndex]; }
+
+  function drawTileTo(targetCtx, x,y,t){
+    var info = TILES[t] || TILES[0];
+    targetCtx.fillStyle = info.color;
+    targetCtx.fillRect(x*TILE, y*TILE, TILE, TILE);
+    if(t===1){ targetCtx.strokeStyle='#3a3f58'; targetCtx.setLineDash([8,8]); targetCtx.strokeRect(x*TILE+2,y*TILE+2,TILE-4,TILE-4); targetCtx.setLineDash([]); }
+    else if(t===2){ targetCtx.fillStyle='#2b2e45'; targetCtx.fillRect(x*TILE+8,y*TILE+12,TILE-16,8); targetCtx.fillStyle='#e7c84b'; targetCtx.fillRect(x*TILE+10,y*TILE+14,TILE-20,4); targetCtx.beginPath(); targetCtx.arc(x*TILE+TILE-10,y*TILE+16,5,0,Math.PI*2); targetCtx.fill(); }
+    else if(t===3){ targetCtx.fillStyle='#5f3a28'; targetCtx.fillRect(x*TILE+4,y*TILE+4,TILE-8,TILE-8); targetCtx.fillStyle='#2a170f'; targetCtx.fillRect(x*TILE+TILE/2-2,y*TILE+TILE/2-2,4,4); }
+    else if(t===4){ targetCtx.fillStyle='#a77935'; targetCtx.fillRect(x*TILE+4,y*TILE+8,TILE-8,TILE-8); targetCtx.fillStyle='#e7c84b'; targetCtx.fillRect(x*TILE+4,y*TILE+14,TILE-8,2); }
+    else if(t===5){ for(var i=0;i<3;i++){ targetCtx.strokeStyle='#3d78b8'; targetCtx.beginPath(); targetCtx.arc(x*TILE+8+i*8,y*TILE+16,6,Math.PI*.2,Math.PI*1.2); targetCtx.stroke(); } }
+    else if(t===6){ targetCtx.fillStyle='#cde0ff'; targetCtx.beginPath(); targetCtx.arc(x*TILE+16,y*TILE+16,8,0,Math.PI*2); targetCtx.fill(); targetCtx.fillStyle='#1b1f2d'; targetCtx.fillRect(x*TILE+10,y*TILE+20,12,6); }
+    else if(t===7){ targetCtx.strokeStyle='#a58bff'; for(var r=6;r<=14;r+=4){ targetCtx.beginPath(); targetCtx.arc(x*TILE+16,y*TILE+16,r,0,Math.PI*2); targetCtx.stroke(); } }
+  }
+
+  function redrawMapCache(){
+    var m = currentLevel().map;
+    mctx.fillStyle='#0e0f14'; mctx.fillRect(0,0,mapLayer.width,mapLayer.height);
+    for(var y=0;y<ROWS;y++){ for(var x=0;x<COLS;x++){ drawTileTo(mctx,x,y,m[y][x]); } }
+    mapChanged=false;
+  }
+
+  function drawAll(){
+    if(state.perfCache && mapChanged) redrawMapCache();
+    if(state.perfCache) ctx.drawImage(mapLayer,0,0);
+    else {
+      var m=currentLevel().map;
+      ctx.fillStyle='#0e0f14'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      for(var y=0;y<ROWS;y++){ for(var x=0;x<COLS;x++){ drawTileTo(ctx,x,y,m[y][x]); } }
+    }
+
+    // Enemies
+    var enemies = currentLevel().enemies || [];
+    for(var i=0;i<enemies.length;i++){
+      var e = enemies[i];
+      ctx.fillStyle = '#ff6b6b';
+      ctx.beginPath(); ctx.arc(e.x*TILE+TILE/2, e.y*TILE+TILE/2, TILE*0.33, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Player
+    ctx.fillStyle = state.player.invincible>0 ? '#ffd6a0' : '#f5a97f';
+    ctx.beginPath(); ctx.arc(state.player.x*TILE+TILE/2, state.player.y*TILE+TILE/2, TILE*0.35, 0, Math.PI*2); ctx.fill();
+
+    if(state.showingHelp){
+      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(18,18,canvas.width-36,126);
+      ctx.fillStyle='#e6e6ea'; ctx.font='16px ui-sans-serif';
+      ctx.fillText('目標：完成任務清單。注意巡邏敵人，被碰到會扣血且短暫無敵。',28,54);
+      ctx.fillText('互動 F：撿鑰匙/開寶箱/開門/進傳送門/跟 NPC 說話',28,80);
+      ctx.fillText('編輯 Tab：0–7 選磚；8 點擊新增巡邏敵人（預設方形路線）',28,106);
+    }
+  }
+
+  function isWalkable(x,y){
+    if(x<0||y<0||x>=COLS||y>=ROWS) return false;
+    var t=currentLevel().map[y][x]; return !(t===1||t===3);
+  }
+
+  function move(dx,dy){
+    if(state.inEditor) return;
+    var nx=state.player.x+dx, ny=state.player.y+dy;
+    if(!isWalkable(nx,ny)) return;
+    state.player.x=nx; state.player.y=ny;
+    if(currentLevel().map[ny][nx]===5 && Math.random()<0.06){
+      state.player.hp=Math.max(1,state.player.hp-1); syncUI(); log('你在水面滑倒（-1 HP）');
+    }
+  }
+
+  function findNPCAt(x,y){
+    var arr = currentLevel().npcs || [];
+    for(var i=0;i<arr.length;i++){ if(arr[i].x===x && arr[i].y===y) return arr[i]; }
+    return null;
+  }
+  function findPortalAt(x,y){
+    var arr = currentLevel().portals || [];
+    for(var i=0;i<arr.length;i++){ var p=arr[i]; if(p.from[0]===x && p.from[1]===y) return p; }
+    return null;
+  }
+
+  function tryInteract(){
+    var t=currentLevel().map[state.player.y][state.player.x];
+    var dirs=[[0,-1],[1,0],[0,1],[-1,0]];
+    if(t===2){ state.player.keys++; currentLevel().map[state.player.y][state.player.x]=0; mapChanged=true; log('撿到鑰匙'); }
+    else if(t===4){ state.player.hp=Math.min(12,state.player.hp+1); currentLevel().map[state.player.y][state.player.x]=0; state.flags.openedChest=true; mapChanged=true; log('打開寶箱，+1 HP'); if(state.levelIndex===2) state.flags.finalChest=true; }
+    else if(t===7){ usePortalAt(state.player.x,state.player.y); return; }
+    else{
+      for(var i=0;i<dirs.length;i++){
+        var x=state.player.x+dirs[i][0], y=state.player.y+dirs[i][1];
+        if(x<0||y<0||x>=COLS||y>=ROWS) continue;
+        var tt=currentLevel().map[y][x];
+        if(tt===3){
+          if(state.player.keys>0){ state.player.keys--; currentLevel().map[y][x]=0; state.flags.openedDoor=true; mapChanged=true; log('你用鑰匙打開了門'); }
+          else log('門被鎖住了，需要鑰匙');
+          break;
+        } else if(tt===6){
+          var npc = findNPCAt(x,y);
+          if(npc){ log(npc.text); if(state.levelIndex===1) state.flags.talkedL2=true; }
+          break;
+        } else if(tt===7){
+          usePortalAt(x,y); break;
+        }
+      }
+    }
+    checkQuests(); syncUI();
+  }
+
+  function usePortalAt(x,y){
+    var p = findPortalAt(x,y);
+    if(!p){ log('這個傳送門似乎失效了…'); return; }
+    state.flags.usedPortal=true; state.levelIndex=p.toLevel;
+    state.player.x=p.to[0]; state.player.y=p.to[1];
+    log('你穿越了傳送門，來到：'+currentLevel().name);
+    mapChanged=true; checkQuests(); syncUI();
+  }
+
+  function updateEnemies(dt){
+    var k=dt/16.7;
+    var enemies = currentLevel().enemies || [];
+    for(var i=0;i<enemies.length;i++){
+      var e = enemies[i];
+      if(!e.path || !e.path.length) continue;
+      if(e.idx==null) e.idx=0;
+      var tx=e.path[e.idx][0], ty=e.path[e.idx][1];
+      var sx = Math.sign(tx-e.x)*Math.min(Math.abs(tx-e.x), (e.speed*k)/TILE);
+      var sy = Math.sign(ty-e.y)*Math.min(Math.abs(ty-e.y), (e.speed*k)/TILE);
+      e.x = +(e.x+sx).toFixed(3);
+      e.y = +(e.y+sy).toFixed(3);
+      if(Math.abs(e.x-tx)<0.02 && Math.abs(e.y-ty)<0.02) e.idx=(e.idx+1)%e.path.length;
+      if(Math.abs(e.x-state.player.x)<0.5 && Math.abs(e.y-state.player.y)<0.5){
+        if(state.player.invincible<=0){
+          state.player.hp=Math.max(0,state.player.hp-1);
+          state.player.invincible=40; log('遭遇巡邏者！（-1 HP）');
+          if(state.player.hp===0){ log('你倒下了…回到關卡起點'); state.player.hp=5; state.player.x=2; state.player.y=2; }
+          syncUI();
+        }
+      }
+      if(e.cooldown>0) e.cooldown--;
+    }
+    if(state.player.invincible>0) state.player.invincible--;
+  }
+
+  function toggleEditor(){ state.inEditor=!state.inEditor; syncUI(); log(state.inEditor?'進入編輯模式':'離開編輯模式'); }
+  canvas.addEventListener('mousedown', function(e){
+    if(!state.inEditor) return;
+    var r=canvas.getBoundingClientRect();
+    var x=Math.floor((e.clientX-r.left)/TILE), y=Math.floor((e.clientY-r.top)/TILE);
+    if(x<=0||y<=0||x>=COLS-1||y>=ROWS-1){ log('外牆不可編輯'); return; }
+    if(editorTile===8){
+      (currentLevel().enemies || (currentLevel().enemies=[])).push({x:x,y:y,path:[[x,y],[x+4,y],[x+4,y+4],[x,y+4]],speed:2.0,cooldown:0});
+      log('新增巡邏敵人於 ('+x+','+y+')');
+    } else {
+      currentLevel().map[y][x]=editorTile; mapChanged=true;
+    }
+  });
+
+  function updatePalette(){
+    var pal=document.getElementById('palette'); pal.innerHTML='';
+    for(var k in TILES){
+      var v=TILES[k];
+      var b=document.createElement('button');
+      b.className='tilebtn'+(parseInt(k)===editorTile?' selected':'');
+      b.textContent=k+':'+v.name; b.style.background=v.color;
+      (function(key){
+        b.onclick=function(){ editorTile=parseInt(key); updatePalette(); };
+      })(k);
+      pal.appendChild(b);
+    }
+    var b2=document.createElement('button'); b2.className='tilebtn'+(editorTile===8?' selected':''); b2.textContent='8:巡邏敵人';
+    b2.onclick=function(){ editorTile=8; updatePalette(); }; pal.appendChild(b2);
+    document.getElementById('cursorInfo').textContent='畫筆：'+(editorTile===8?'巡邏敵人':TILES[editorTile].name);
+  }
+
+  function renderQuestList(){
+    var ul=document.getElementById('questList'); ul.innerHTML='';
+    var list = currentLevel().quests || [];
+    for(var i=0;i<list.length;i++){
+      var q=list[i]; var li=document.createElement('li');
+      li.textContent=q.text; if(q.done) li.className='done'; ul.appendChild(li);
+    }
+  }
+  function checkQuests(){
+    var lv=currentLevel(); var list=lv.quests || [];
+    for(var i=0;i<list.length;i++){
+      var q=list[i];
+      if(!q.done){
+        if(q.id==='q_key' && state.player.keys>0) q.done=true;
+        if(q.id==='q_door' && state.flags.openedDoor) q.done=true;
+        if(q.id==='q_portal' && state.flags.usedPortal) q.done=true;
+        if(q.id==='q_chest' && state.flags.openedChest) q.done=true;
+        if(q.id==='q_npc' && state.flags.talkedL2) q.done=true;
+        if(q.id==='q_portal2' && state.levelIndex>=2) q.done=true;
+        if(q.id==='q_final' && state.flags.finalChest) q.done=true;
+        if(q.id==='q_escape' && state.flags.usedPortal) q.done=true;
+      }
+    }
+    renderQuestList();
+  }
+
+  function syncUI(){
+    document.getElementById('hp').textContent=state.player.hp;
+    document.getElementById('keys').textContent=state.player.keys;
+    document.getElementById('levelName').textContent=currentLevel().name;
+    document.getElementById('mode').textContent=state.inEditor?'編輯':'探索';
+    document.getElementById('perfBadge').textContent=state.perfCache?'快取渲染 ON':'快取渲染 OFF';
+  }
+
+  function saveGame(){ try{ localStorage.setItem('adv_v3_save', JSON.stringify(state)); log('已存檔'); }catch(e){ log('存檔失敗：'+e.message); } }
+  function loadGame(){ try{ var txt=localStorage.getItem('adv_v3_save'); if(!txt){ log('找不到存檔'); return; } var t=txt.trim(); if(!t||(t[0]!=='{'&&t[0]!=='[')) throw new Error('存檔不是 JSON'); state=JSON.parse(t); log('已載入存檔'); mapChanged=true; renderQuestList(); syncUI(); }catch(e){ log('讀檔失敗：'+e.message); } }
+  function resetSave(){ try{ localStorage.removeItem('adv_v3_save'); log('已清空存檔'); }catch(e){ log('清空失敗：'+e.message); } }
+  function exportJSON(){ try{ var blob=new Blob([JSON.stringify({levels:state.levels},null,2)],{type:'application/json'}); var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download='levels.json'; a.click(); URL.revokeObjectURL(url); log('已匯出 levels.json'); }catch(e){ log('匯出失敗：'+e.message); } }
+  function importJSONFile(){ var inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.onchange=function(){ var f=inp.files[0]; var reader=new FileReader(); reader.onload=function(){ try{ var raw=reader.result; var t=(raw||'').trim(); if(!t||(t[0]!=='{'&&t[0]!=='[')) throw new Error('不是 JSON（可能是 HTML）'); var data=JSON.parse(t); if(data.levels && data.levels.length){ state.levels=data.levels; state.levelIndex=0; log('已匯入 levels'); mapChanged=true; renderQuestList(); syncUI(); } else if(data.map){ currentLevel().map=data.map; log('已匯入單張地圖'); mapChanged=true; renderQuestList(); } else throw new Error('需要 {levels:[...]} 或 {map:[...]}'); }catch(e){ log('匯入失敗：'+e.message); } }; reader.readAsText(f); }; inp.click(); }
+
+  var pasteModal=document.getElementById('pasteModal'); var pasteArea=document.getElementById('pasteArea');
+  document.getElementById('pasteCancel').onclick=function(){ pasteModal.style.display='none'; };
+  document.getElementById('pasteApply').onclick=function(){ try{ var txt=pasteArea.value.trim(); if(!txt||(txt[0]!=='{'&&txt[0]!=='[')) throw new Error('不是 JSON（可能貼了 HTML）'); var data=JSON.parse(txt); if(data.levels && data.levels.length){ state.levels=data.levels; state.levelIndex=0; mapChanged=true; log('已匯入 levels（貼上）'); renderQuestList(); syncUI(); } else if(data.map){ currentLevel().map=data.map; mapChanged=true; log('已匯入單張地圖（貼上）'); renderQuestList(); } else throw new Error('需要 {levels:[...]} 或 {map:[...]}'); pasteModal.style.display='none'; }catch(e){ log('貼上失敗：'+e.message); } };
+
+  // Buttons
+  document.getElementById('btn-up').onclick=function(){ move(0,-1); };
+  document.getElementById('btn-down').onclick=function(){ move(0,1); };
+  document.getElementById('btn-left').onclick=function(){ move(-1,0); };
+  document.getElementById('btn-right').onclick=function(){ move(1,0); };
+  document.getElementById('btn-interact').onclick=function(){ tryInteract(); };
+  document.getElementById('btn-edit').onclick=function(){ toggleEditor(); };
+  document.getElementById('btn-save').onclick=function(){ saveGame(); };
+  document.getElementById('btn-load').onclick=function(){ loadGame(); };
+  document.getElementById('btn-reset').onclick=function(){ resetSave(); };
+  document.getElementById('btn-export').onclick=function(){ exportJSON(); };
+  document.getElementById('btn-import').onclick=function(){ importJSONFile(); };
+  document.getElementById('btn-paste').onclick=function(){ pasteModal.style.display='flex'; pasteArea.value=''; };
+  document.getElementById('btn-rand').onclick=function(){ var m=currentLevel().map; var rx=2+Math.floor(Math.random()*(COLS-10)); var ry=2+Math.floor(Math.random()*(ROWS-8)); var w=6+Math.floor(Math.random()*8); var h=4+Math.floor(Math.random()*6); for(var y=ry;y<ry+h;y++){ for(var x=rx;x<rx+w;x++){ m[y][x]=(x===rx||y===ry||x===rx+w-1||y===ry+h-1)?1:0; } } m[ry+1][rx+1]=4; m[ry+2][rx+2]=2; mapChanged=true; log('已生成隨機房間'); };
+  document.getElementById('btn-template').onclick=function(){ state.levels=_clone(defaultLevels); state.levelIndex=0; state.player={x:2,y:2,hp:5,keys:0,invincible:0}; state.flags={openedDoor:false,openedChest:false,usedPortal:false,talkedL2:false,finalChest:false}; mapChanged=true; log('已載入示範關卡（L1-L3）'); renderQuestList(); syncUI(); };
+
+  // Main loop
+  var last=performance.now();
+  function loop(now){ var dt=now-last; last=now; updateEnemies(dt); drawAll(); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  // Init
+  updatePalette(); renderQuestList(); syncUI(); redrawMapCache(); drawAll(); log('v3-compat 啟動');
+})();
+</script>
+</body>
+</html>
